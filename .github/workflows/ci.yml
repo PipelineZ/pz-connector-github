@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build Pz.Connector.Github.slnx -c Release
+      # The acceptance suite drives the fake GitHub server in-process via WebApplicationFactory<Program>
+      # (Kestrel test host, no external dependencies) -- unlike sibling connectors that need
+      # Testcontainers, every test here runs identically on both runners, unfiltered.
+      - run: dotnet test Pz.Connector.Github.slnx -c Release --no-build --blame-hang --blame-hang-timeout 10m --blame-hang-dump-type mini
+
+  pack-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish the host RID and pack
+        run: |
+          set -euo pipefail
+          # A separate `restore -r` before `publish -r --no-restore` is required on a cold NuGet
+          # cache: the restore folded into `publish -r` alone does not pull the RID-specific
+          # Microsoft.NETCore.App.Runtime pack this Native AOT build's FrameworkReference needs
+          # (NETSDK1112), even though the same restore run standalone does.
+          dotnet restore src/Pz.Connector.Github -r linux-x64
+          dotnet publish src/Pz.Connector.Github -c Release -r linux-x64 --no-restore
+          dotnet pack src/Pz.Connector.Github -c Release -o packages
+          ls packages
+          VERSION="$(ls packages/Pz.Connector.Github.*.nupkg | sed -E 's|.*/Pz\.Connector\.Github\.(.*)\.nupkg|\1|')"
+          echo "PKG_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          unzip -p "packages/Pz.Connector.Github.${VERSION}.nupkg" pz.connector.json | tee manifest.json
+          grep -q '"runtime": "process"' manifest.json
+          grep -q '"name": "github"' manifest.json
+          ! grep -q 'projectDirectoryAnchor' manifest.json
+          # GithubConnector.Capabilities is ConnectorCapabilities.None; the manifest serializes an
+          # empty capability set as an empty array, verified by building and packing locally and
+          # inspecting the real manifest -- never guessed.
+          grep -q '"capabilities": \[\]' manifest.json
+      - name: Start the fake GitHub server
+        run: |
+          set -euo pipefail
+          dotnet publish tests/fixtures/FakeGithubServer -c Release -o fake-server-publish
+          (cd fake-server-publish && ASPNETCORE_URLS=http://localhost:5099 dotnet FakeGithubServer.dll &)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5099/repos/fixture/repo >/dev/null && break
+            sleep 1
+          done
+      - name: Install pz, restore from the local feed, run, conformance-test
+        env:
+          GH_URL: http://localhost:5099
+          GH_TOKEN: fixture-test-token
+        run: |
+          set -euo pipefail
+          dotnet tool install --global pz --version 0.6.0
+          cd tests/e2e
+          sed -i "s/0.0.0-PLACEHOLDER/${PKG_VERSION}/" project.yml
+          pz restore --feeds "${GITHUB_WORKSPACE}/packages"
+          PKG_DIR=".pz/packages/Pz.Connector.Github/${PKG_VERSION}"
+          test -f "${PKG_DIR}/native/Pz.Connector.Github"
+          pz run
+          # 27 real issues (30 fixture rows minus 3 PR-shaped ones the connector skips). No
+          # `strategy:` is declared on the output, so it defaults to "append": LocalFiles lands one
+          # csv per run under `<root>/<entity>/<entity>-<run-guid>.csv`, each carrying its own header
+          # row -- concatenate every file under the output directory and strip one header per file.
+          test "$(cat out/open_issues_out/*.csv | grep -vc '^id,number,title,state$')" -eq 27
+          pz connector test "${PKG_DIR}" --config probe.yml | tee report.txt
+          ! grep -q FAIL report.txt

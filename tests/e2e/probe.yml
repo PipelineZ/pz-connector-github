@@ -1,0 +1,11 @@
+connection:
+  # Interpolated from the environment by `pz connector test --config`, the same way connections.yml
+  # is: the CI job exports GH_URL/GH_TOKEN for both.
+  url: ${GH_URL}
+  token: ${GH_TOKEN}
+read:
+  dataset: open_issues
+  entity: fixture/repo/issues
+  per_page: 10
+# No write: block -- this connector has no sink capability, so every write-gated conformance
+# vector reports Skipped rather than trying (and failing) to open a sink that doesn't exist.
