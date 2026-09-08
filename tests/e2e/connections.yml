@@ -16,5 +16,9 @@ out:
   root: ./out
   entities:
     open_issues_out:
+      # strategy: replace (default is append) -- a fixed final filename, and a second run
+      # overwrites with the same 27 rows instead of accumulating a second copy, which is what lets
+      # CI prove the pipeline is safe to re-run, not just runnable once.
       write:
         format: csv
+        strategy: replace

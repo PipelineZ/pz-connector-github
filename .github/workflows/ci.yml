@@ -82,10 +82,12 @@ jobs:
           PKG_DIR=".pz/packages/Pz.Connector.Github/${PKG_VERSION}"
           test -f "${PKG_DIR}/native/Pz.Connector.Github"
           pz run
-          # 27 real issues (30 fixture rows minus 3 PR-shaped ones the connector skips). No
-          # `strategy:` is declared on the output, so it defaults to "append": LocalFiles lands one
-          # csv per run under `<root>/<entity>/<entity>-<run-guid>.csv`, each carrying its own header
-          # row -- concatenate every file under the output directory and strip one header per file.
-          test "$(cat out/open_issues_out/*.csv | grep -vc '^id,number,title,state$')" -eq 27
+          # 27 real issues (30 fixture rows minus 3 PR-shaped ones the connector skips). The output
+          # declares strategy: replace, so LocalFiles always lands the same single file.
+          test "$(tail -n +2 out/open_issues_out/open_issues_out.csv | wc -l)" -eq 27
+          # A second run overwrites (replace strategy) rather than accumulating -- still 27 rows,
+          # proving the pipeline is safe to re-run, not just runnable once.
+          pz run
+          test "$(tail -n +2 out/open_issues_out/open_issues_out.csv | wc -l)" -eq 27
           pz connector test "${PKG_DIR}" --config probe.yml | tee report.txt
           ! grep -q FAIL report.txt
