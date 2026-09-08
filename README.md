@@ -73,9 +73,10 @@ refused at compile time.
 ```
 
 `entity:` lets the pz entity name differ from the GitHub path. `ref:` is only valid on a `commits`
-entity. No column pruning or predicate pushdown beyond the watermark: schemas are fixed and small,
-and GitHub's REST filters (`state`, `since`, `created`) are already exposed as the typed read
-options above -- there is no `query:` escape hatch.
+entity. No column pruning or predicate pushdown beyond the watermark: schemas are fixed and small.
+GitHub's REST filters (`since`, `created`) are driven internally from the watermark; `state` is
+always `all` (fixed, not a read option) so both open and closed items are always read. There is no
+`query:` escape hatch and no `state:` read option.
 
 ## Schemas
 
@@ -136,7 +137,8 @@ single-PR `GET`; fetching them per row would be an N+1 call per PR and is out of
 ### `commits`
 
 Always in the topological history of the configured `ref` (default: the repo's default branch,
-resolved once via `GET /repos/{o}/{r}` at schema time).
+resolved once via `GET /repos/{o}/{r}` at plan-read time, i.e. inside `PlanReadAsync`, not
+`GetSchemaAsync`).
 
 | column | source | type |
 |---|---|---|
@@ -187,7 +189,14 @@ capability, no `ColumnPruning`.
 | `issues/comments` | `updated_at` | server-side `since` filter |
 | `commits` | `committed_at` | server-side `since` filter against `commit.committer.date`; commits are immutable once landed, so this is a safe append-oriented cursor |
 | `releases` | `created_at` | **no filter param at all** -- paged newest-`created_at`-first, same early-stop as `pulls` |
-| `actions/runs` | `updated_at` | server-side range filter (`created=>=<ts>`) narrows the scan; `updated_at` (not `created_at`) is the cursor because a run's `status`/`conclusion` keep changing after creation, and updated-in-place rows inside the window are naturally re-emitted |
+| `actions/runs` | `updated_at` | server-side range filter (`created=>=<ts>`) narrows the scan; `updated_at` (not `created_at`) is the cursor because a run's `status`/`conclusion` keep changing after creation, and updated-in-place rows inside the window are re-emitted **as long as the run's `created_at` is still at or after the watermark floor** |
+
+**Known limitation (`actions/runs`):** the `created>=<watermark>` server-side filter can permanently
+miss a run's final state. A run created *before* the watermark, but which is still updating (e.g.
+`status: in_progress`) when the watermark advances past its `created_at`, will not be re-read on a
+later incremental run -- its final `status`/`conclusion` can go stale in the warehouse forever. Use
+`pz run --full-refresh` periodically if you need guaranteed-fresh terminal states for older runs.
+This is a known v1 trade-off, not a bug; a safety-window fix is tracked as a future improvement.
 
 ## Rate limiting
 

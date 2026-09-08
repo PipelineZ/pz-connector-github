@@ -57,7 +57,10 @@ public sealed class PullsSchemaTests
     [Fact]
     public void ToRow_maps_every_column_from_a_full_dto()
     {
-        var dto = FullDto() with { MergedAt = "2024-02-01T00:00:00Z", ClosedAt = "2024-02-01T00:00:00Z" };
+        // MergedAt and ClosedAt are deliberately DIFFERENT timestamps here (unlike every sibling
+        // kind's equivalent full-column test): a transposition bug swapping which row-array slot
+        // each maps to would pass undetected if both used the same value.
+        var dto = FullDto() with { MergedAt = "2024-02-01T00:00:00Z", ClosedAt = "2024-02-03T00:00:00Z" };
         var row = PullsSchema.ToRow(dto);
 
         SchemaAssert.RowEquals(PullsSchema.Schema,
@@ -74,7 +77,7 @@ public sealed class PullsSchemaTests
             new DateTimeOffset(2024, 2, 1, 0, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2024, 1, 20, 8, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2024, 1, 25, 8, 0, 0, TimeSpan.Zero),
-            new DateTimeOffset(2024, 2, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2024, 2, 3, 0, 0, 0, TimeSpan.Zero),
             "https://github.com/o/r/pull/7",
         ], row);
     }
