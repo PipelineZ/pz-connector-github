@@ -192,7 +192,7 @@ internal sealed class GithubPartition(
                 $"/repos/{owner}/{repo}/issues/comments?sort=updated&direction=asc&per_page={perPage}"
                 + (watermarkIso is null ? "" : $"&since={watermarkIso}"),
             GithubEntityKind.Commits =>
-                $"/repos/{owner}/{repo}/commits?sha={resolvedRef}&per_page={perPage}"
+                $"/repos/{owner}/{repo}/commits?sha={Uri.EscapeDataString(resolvedRef!)}&per_page={perPage}"
                 + (watermarkIso is null ? "" : $"&since={watermarkIso}"),
             GithubEntityKind.Releases =>
                 $"/repos/{owner}/{repo}/releases?per_page={perPage}",

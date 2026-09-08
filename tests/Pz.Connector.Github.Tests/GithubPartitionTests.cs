@@ -190,6 +190,37 @@ public sealed class GithubPartitionTests
         batch.Dispose();
     }
 
+    [Fact]
+    public async Task Commits_url_escapes_a_ref_containing_hash_ampersand_and_space()
+    {
+        // '#' is Uri's fragment delimiter -- left unescaped, "sha=feature#123&x=y bar" would have
+        // everything from '#' onward silently dropped before the request is even sent, turning into
+        // a request for branch "feature" instead of the ref actually configured. '&' and the space
+        // would each corrupt the query string a different way (an injected bogus parameter; an
+        // invalid/truncated value). Escaping must survive all three in one ref.
+        const string rawRef = "feature#123&x=y bar";
+        var expectedSha = Uri.EscapeDataString(rawRef);
+        var handler = new FakeHandler();
+        handler.Map($"/repos/acme/widgets/commits?sha={expectedSha}&per_page=50",
+            FakeHandler.Json(HttpStatusCode.OK, """
+                [{"sha":"abc123","commit":{"author":{"name":"a","email":"a@x.com","date":"2026-01-02T00:00:00Z"},
+                  "committer":{"name":"a","email":"a@x.com","date":"2026-01-02T00:00:00Z"},"message":"m"},
+                  "author":{"login":"alice"},"html_url":"https://x"}]
+                """));
+
+        var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.Commits), 50, rawRef);
+        var partition = Partition(Client(handler), config, resolvedRef: rawRef, Spec("acme/widgets/commits"));
+
+        var batches = await DrainAsync(partition);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal($"/repos/acme/widgets/commits?sha={expectedSha}&per_page=50", request.PathAndQuery);
+        Assert.DoesNotContain('#', request.PathAndQuery);
+        var batch = Assert.Single(batches);
+        Assert.Equal(1, batch.Length);
+        batch.Dispose();
+    }
+
     // ---- IssueComments: since=, every item appended ----
 
     [Fact]
