@@ -39,14 +39,26 @@ internal sealed record GithubDatasetConfig(EntityRef Entity, int PerPage, string
         if (spec.Options.TryGetValue("per_page", out var perPageRaw) && perPageRaw is not null)
         {
             int parsed;
-            try
-            {
-                parsed = Convert.ToInt32(perPageRaw, CultureInfo.InvariantCulture);
-            }
-            catch (Exception ex) when (ex is FormatException or OverflowException or InvalidCastException)
+            // Convert.ToInt32(bool) silently succeeds (true -> 1, false -> 0) -- exactly the kind of
+            // silent-wrong-value a typo'd `per_page: true` must not produce. Reject it up front with
+            // the same error shape as any other non-integer value, rather than letting the request
+            // quietly ask for 1 row per page.
+            if (perPageRaw is bool)
             {
                 errors.Add($"dataset '{spec.Dataset}': 'per_page' must be an integer; got '{perPageRaw}'");
                 parsed = 100;
+            }
+            else
+            {
+                try
+                {
+                    parsed = Convert.ToInt32(perPageRaw, CultureInfo.InvariantCulture);
+                }
+                catch (Exception ex) when (ex is FormatException or OverflowException or InvalidCastException)
+                {
+                    errors.Add($"dataset '{spec.Dataset}': 'per_page' must be an integer; got '{perPageRaw}'");
+                    parsed = 100;
+                }
             }
 
             if (parsed is < 1 or > 100)

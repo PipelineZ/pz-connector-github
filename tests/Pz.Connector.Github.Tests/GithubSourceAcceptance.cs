@@ -309,21 +309,22 @@ public sealed class GithubSourceAcceptance : IAsyncLifetime
     // ---- forced-status classification ----
     //
     // Each case drives the connector's own default-branch lookup (a Commits dataset with no
-    // `ref:`, whose request URL -- `/repos/{owner}/{repo}` -- carries no query string of its own)
-    // with a repo name that embeds `?force_status=...`; once the connector's request string is
-    // parsed as a URI, that becomes exactly a `force_status` query parameter, so the fake server's
-    // short-circuit responds before ever consulting fixture data. This is the only entity-addressing
-    // surface the connector exposes with no query string already appended, so it is the one place
-    // an acceptance test can reach every forced-status route through the real connector rather than
-    // by calling the fake server's HTTP endpoint directly.
+    // `ref:`, whose request URL -- `repos/{owner}/{repo}` -- carries no query string of its own)
+    // against one of the fake server's magic `force-*` repo names, so its short-circuit middleware
+    // responds before ever consulting fixture data. This is the only entity-addressing surface the
+    // connector exposes with no query string already appended, so it is the one place an acceptance
+    // test can reach every forced-status route through the real connector rather than by calling the
+    // fake server's HTTP endpoint directly. Unlike an earlier version of this suite, the magic name
+    // is a charset-valid repo name (owner/repo now go through EntityRef's own validation), not a
+    // `?force_status=...` string smuggled through an unvalidated "repo name".
 
-    private async Task<PzConnectorException> ForcedStatusAsync(string repoSuffix)
+    private async Task<PzConnectorException> ForcedStatusAsync(string repoName)
     {
         ISourceConnector connector = new GithubConnector();
         var source = await connector.OpenAsync(Config(_baseUrl), CancellationToken.None);
         try
         {
-            var spec = Spec($"fixture/{repoSuffix}/commits");
+            var spec = Spec($"fixture/{repoName}/commits");
             return await Assert.ThrowsAsync<PzConnectorException>(() =>
                 source.PlanReadAsync(spec, ReadHints.None, CancellationToken.None).AsTask());
         }
@@ -334,19 +335,19 @@ public sealed class GithubSourceAcceptance : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ForcedStatus_429_is_not_transient_but_carries_the_retry_after_header()
+    public async Task ForcedStatus_429_is_transient_and_carries_the_retry_after_header()
     {
-        var ex = await ForcedStatusAsync("repo?force_status=429");
+        var ex = await ForcedStatusAsync("force-429");
 
-        Assert.False(ex.IsTransient);
+        Assert.True(ex.IsTransient);
         Assert.Equal(TimeSpan.FromSeconds(5), ex.RetryAfter);
-        Assert.Contains("You have exceeded a rate limit", ex.Message);
+        Assert.Contains("rate limited (HTTP 429)", ex.Message);
     }
 
     [Fact]
     public async Task ForcedStatus_403_with_remaining_zero_is_transient_with_a_reset_based_retry_after()
     {
-        var ex = await ForcedStatusAsync("repo?force_status=403&remaining=0");
+        var ex = await ForcedStatusAsync("force-403");
 
         Assert.True(ex.IsTransient);
         Assert.NotNull(ex.RetryAfter);
@@ -356,9 +357,23 @@ public sealed class GithubSourceAcceptance : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ForcedStatus_403_secondary_rate_limit_with_retry_after_is_transient()
+    {
+        // GitHub's documented secondary/abuse rate limit: a 403 carrying `Retry-After` with no
+        // rate-limit-remaining header at all -- distinct from the primary-limit case above, and
+        // previously only unit-tested (GithubErrorsTests), never proven end-to-end through the real
+        // connector against a real HTTP response.
+        var ex = await ForcedStatusAsync("force-403-retry-after");
+
+        Assert.True(ex.IsTransient);
+        Assert.Equal(TimeSpan.FromSeconds(30), ex.RetryAfter);
+        Assert.Contains("rate limited (HTTP 403)", ex.Message);
+    }
+
+    [Fact]
     public async Task ForcedStatus_401_is_not_transient_and_carries_no_retry_after()
     {
-        var ex = await ForcedStatusAsync("repo?force_status=401");
+        var ex = await ForcedStatusAsync("force-401");
 
         Assert.False(ex.IsTransient);
         Assert.Null(ex.RetryAfter);
@@ -368,7 +383,7 @@ public sealed class GithubSourceAcceptance : IAsyncLifetime
     [Fact]
     public async Task ForcedStatus_404_is_not_transient_and_carries_no_retry_after()
     {
-        var ex = await ForcedStatusAsync("repo?force_status=404");
+        var ex = await ForcedStatusAsync("force-404");
 
         Assert.False(ex.IsTransient);
         Assert.Null(ex.RetryAfter);
@@ -378,7 +393,7 @@ public sealed class GithubSourceAcceptance : IAsyncLifetime
     [Fact]
     public async Task ForcedStatus_422_is_not_transient_and_surfaces_the_validation_message()
     {
-        var ex = await ForcedStatusAsync("repo?force_status=422");
+        var ex = await ForcedStatusAsync("force-422");
 
         Assert.False(ex.IsTransient);
         Assert.Null(ex.RetryAfter);

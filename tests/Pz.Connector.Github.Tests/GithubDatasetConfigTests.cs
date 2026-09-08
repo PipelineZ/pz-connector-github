@@ -68,6 +68,18 @@ public sealed class GithubDatasetConfigTests
     }
 
     [Fact]
+    public void Per_page_boolean_value_errors_instead_of_silently_converting_to_1_or_0()
+    {
+        // Convert.ToInt32(true) silently succeeds as 1 -- a typo'd `per_page: true` must fail loudly,
+        // not silently request 1 row per page.
+        var errors = new List<string>();
+        var config = GithubDatasetConfig.Parse(Spec(new() { ["per_page"] = true }), errors);
+
+        Assert.Null(config);
+        Assert.Contains(errors, e => e.Contains("'per_page'") && e.Contains("integer"));
+    }
+
+    [Fact]
     public void Ref_on_commits_entity_is_accepted()
     {
         var errors = new List<string>();
@@ -113,6 +125,16 @@ public sealed class GithubDatasetConfigTests
             "dataset 'not-a-valid-entity': 'entity' value 'not-a-valid-entity' is not a valid GitHub entity " +
             "reference (expected '{owner}/{repo}/{kind}' where kind is one of: issues, pulls, issues/comments, " +
             "commits, releases, actions/runs)", errors);
+    }
+
+    [Fact]
+    public void Entity_owner_with_a_disallowed_character_surfaces_an_aggregated_parse_error()
+    {
+        var errors = new List<string>();
+        var config = GithubDatasetConfig.Parse(Spec([], dataset: "owner?evil/pz/issues"), errors);
+
+        Assert.Null(config);
+        Assert.Contains(errors, e => e.Contains("not a valid GitHub entity reference"));
     }
 
     [Fact]

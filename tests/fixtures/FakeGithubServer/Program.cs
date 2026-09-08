@@ -6,21 +6,33 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<RequestLog>();
 var app = builder.Build();
 
-// Forced-status short-circuit: any request carrying `?force_status=N` gets that status back
-// immediately, before auth or the default rate-limit headers -- applied uniformly, to every route,
-// exactly like the spec asks. This is the only way an acceptance test can drive a specific GitHub
-// failure shape through the *real* connector: none of the connector's own read-option surface
-// (entity/per_page/ref) lets a caller inject an arbitrary extra query parameter into a built URL,
-// but the connector's default-branch lookup (`/repos/{owner}/{repo}`, used for a Commits dataset
-// with no explicit `ref:`) builds its URL with no query string of its own, so a repo name carrying
-// a literal `?force_status=...` becomes exactly that query parameter once the connector's request
-// string is parsed as a URI.
+// Forced-status short-circuit: a repo name matching one of the magic `force-*` names below gets
+// that status back immediately, before auth or the default rate-limit headers -- applied uniformly,
+// to every route, exactly like the spec asks. This is the only way an acceptance test can drive a
+// specific GitHub failure shape through the *real* connector: none of the connector's own read-option
+// surface (entity/per_page/ref) lets a caller inject an arbitrary extra query parameter into a built
+// URL, but the connector's default-branch lookup (`repos/{owner}/{repo}`, used for a Commits dataset
+// with no explicit `ref:`) builds its URL with no query string of its own, so a repo path segment
+// alone is enough to route here. Magic names, not a `?force_status=` query string smuggled through
+// an unvalidated "repo name": owner/repo now go through EntityRef's charset validation, so the repo
+// segment must be a real, valid GitHub-shaped name.
+var forcedStatusHandlers = new Dictionary<string, Func<HttpContext, Task>>(StringComparer.Ordinal)
+{
+    ["force-401"] = ctx => ForcedJsonAsync(ctx, 401, "Bad credentials"),
+    ["force-403"] = Forced403PrimaryAsync,
+    ["force-403-retry-after"] = Forced403SecondaryAsync,
+    ["force-404"] = ctx => ForcedJsonAsync(ctx, 404, "Not Found"),
+    ["force-422"] = ctx => ForcedJsonAsync(ctx, 422, "Validation Failed"),
+    ["force-429"] = Forced429Async,
+};
+
 app.Use(async (context, next) =>
 {
-    if (context.Request.Query.TryGetValue("force_status", out var forced)
-        && int.TryParse(forced, NumberStyles.Integer, CultureInfo.InvariantCulture, out var forcedStatus))
+    var segments = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
+    if (segments.Length >= 3 && segments[0] == "repos" && segments[1] == FixtureRepo.Owner
+        && forcedStatusHandlers.TryGetValue(segments[2], out var handler))
     {
-        await WriteForcedStatusAsync(context, forcedStatus);
+        await handler(context);
         return;
     }
 
@@ -28,7 +40,8 @@ app.Use(async (context, next) =>
 });
 
 // Every response that isn't a forced-status short-circuit carries the default rate-limit headers,
-// and every request (forced-status ones included, for inspection convenience) is recorded.
+// and every request is recorded -- forced-status ones are NOT recorded, since that middleware
+// returns before ever reaching this one.
 app.Use(async (context, next) =>
 {
     context.RequestServices.GetRequiredService<RequestLog>()
@@ -202,16 +215,6 @@ static string BuildNextLink(HttpContext ctx, int nextPage)
     return $"<{url}>; rel=\"next\"";
 }
 
-static Task WriteForcedStatusAsync(HttpContext context, int status) => status switch
-{
-    429 => Forced429Async(context),
-    403 => Forced403Async(context),
-    401 => ForcedJsonAsync(context, 401, "Bad credentials"),
-    404 => ForcedJsonAsync(context, 404, "Not Found"),
-    422 => ForcedJsonAsync(context, 422, "Validation Failed"),
-    _ => ForcedJsonAsync(context, status, $"forced status {status}"),
-};
-
 static async Task Forced429Async(HttpContext context)
 {
     context.Response.Headers["Retry-After"] = "5";
@@ -219,14 +222,25 @@ static async Task Forced429Async(HttpContext context)
     await context.Response.WriteAsJsonAsync(new { message = "You have exceeded a rate limit" });
 }
 
-static async Task Forced403Async(HttpContext context)
+/// <summary>Primary rate limit: `x-ratelimit-remaining: 0`, the header pair GithubErrors checks
+/// first (unambiguous regardless of status code).</summary>
+static async Task Forced403PrimaryAsync(HttpContext context)
 {
-    var remaining = context.Request.Query["remaining"].FirstOrDefault() ?? "0";
-    context.Response.Headers["x-ratelimit-remaining"] = remaining;
+    context.Response.Headers["x-ratelimit-remaining"] = "0";
     context.Response.Headers["x-ratelimit-reset"] =
         DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
     context.Response.StatusCode = 403;
     await context.Response.WriteAsJsonAsync(new { message = "API rate limit exceeded" });
+}
+
+/// <summary>Secondary/abuse rate limit: a 403 carrying `Retry-After` with no rate-limit-remaining
+/// header at all -- independent of the primary counter, GitHub's other documented 403 rate-limit
+/// shape.</summary>
+static async Task Forced403SecondaryAsync(HttpContext context)
+{
+    context.Response.Headers["Retry-After"] = "30";
+    context.Response.StatusCode = 403;
+    await context.Response.WriteAsJsonAsync(new { message = "You have exceeded a secondary rate limit" });
 }
 
 static async Task ForcedJsonAsync(HttpContext context, int status, string message)
