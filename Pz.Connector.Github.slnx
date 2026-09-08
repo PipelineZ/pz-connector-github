@@ -5,4 +5,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Pz.Connector.Github.Tests/Pz.Connector.Github.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/fixtures/">
+    <Project Path="tests/fixtures/FakeGithubServer/FakeGithubServer.csproj" />
+  </Folder>
 </Solution>

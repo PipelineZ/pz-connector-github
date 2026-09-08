@@ -20,6 +20,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Pz.Connector.Github\Pz.Connector.Github.csproj" />
+    <!-- Aliased: both this project and Pz.Connector.Github itself (an Exe-output connector host)
+         have a top-level-statements `Program` class in the global namespace; InternalsVisibleTo
+         from the connector makes its own internal `Program` visible here too, so an unaliased
+         reference to FakeGithubServer's `Program` is ambiguous (CS0433) without the alias. -->
+    <ProjectReference Include="..\fixtures\FakeGithubServer\FakeGithubServer.csproj" Aliases="global,FakeServerAssembly" />
   </ItemGroup>
 
 </Project>
