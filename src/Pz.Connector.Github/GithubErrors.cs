@@ -40,7 +40,11 @@ internal static class GithubErrors
         }
 
         return status is HttpStatusCode.InternalServerError or HttpStatusCode.BadGateway
-            or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
+            or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout
+            // GitHub's documented secondary/abuse rate limit returns EITHER 403 (handled above via
+            // Retry-After, since a bare 403 is otherwise a scopes problem) OR 429 -- unlike 403, a 429
+            // is unambiguously a rate limit regardless of which headers happen to be present.
+            or HttpStatusCode.TooManyRequests;
     }
 
     /// <summary>Builds the classified exception for a non-success HTTP response. Reads the
@@ -83,6 +87,7 @@ internal static class GithubErrors
             HttpStatusCode.Forbidden => "forbidden (HTTP 403); check token scopes (private repos need the repo scope)",
             HttpStatusCode.NotFound => "not found (HTTP 404); check owner/repo and that the token can see it",
             HttpStatusCode.UnprocessableEntity => message ?? "unprocessable (HTTP 422)",
+            HttpStatusCode.TooManyRequests => "rate limited (HTTP 429); retrying after the reset",
             HttpStatusCode.InternalServerError or HttpStatusCode.BadGateway
                 or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout =>
                 $"server error (HTTP {(int)status})",

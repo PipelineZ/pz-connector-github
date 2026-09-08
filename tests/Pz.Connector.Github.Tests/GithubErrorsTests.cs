@@ -64,6 +64,22 @@ public sealed class GithubErrorsTests
         Assert.False(GithubErrors.IsTransient(HttpStatusCode.Forbidden, headers, null));
     }
 
+    // ---- IsTransient: 429 (secondary/abuse rate limit), regardless of headers ----
+
+    [Fact]
+    public void Rate_limited_429_is_transient_even_without_any_rate_limit_headers()
+    {
+        Assert.True(GithubErrors.IsTransient(HttpStatusCode.TooManyRequests, null, null));
+    }
+
+    [Fact]
+    public void Rate_limited_429_is_transient_with_rate_limit_headers_present_too()
+    {
+        var headers = new Dictionary<string, string> { ["x-ratelimit-remaining"] = "10" };
+
+        Assert.True(GithubErrors.IsTransient(HttpStatusCode.TooManyRequests, headers, null));
+    }
+
     // ---- IsTransient: 5xx ----
 
     [Theory]
@@ -193,6 +209,31 @@ public sealed class GithubErrorsTests
         var ex = await GithubErrors.FromResponseAsync(response, NoSecrets, new FakeTime(Epoch), "create issue");
 
         Assert.Equal("github: create issue: unprocessable (HTTP 422)", ex.Message);
+    }
+
+    [Fact]
+    public async Task Status_429_with_retry_after_is_transient_with_that_delay()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        response.Headers.TryAddWithoutValidation("Retry-After", "5");
+
+        var ex = await GithubErrors.FromResponseAsync(response, NoSecrets, new FakeTime(Epoch), "list issues");
+
+        Assert.True(ex.IsTransient);
+        Assert.Equal(TimeSpan.FromSeconds(5), ex.RetryAfter);
+        Assert.Equal("github: list issues: rate limited (HTTP 429); retrying after the reset", ex.Message);
+    }
+
+    [Fact]
+    public async Task Status_429_without_retry_after_is_still_transient_with_no_retry_after_value()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+
+        var ex = await GithubErrors.FromResponseAsync(response, NoSecrets, new FakeTime(Epoch), "list issues");
+
+        Assert.True(ex.IsTransient);
+        Assert.Null(ex.RetryAfter);
+        Assert.Equal("github: list issues: rate limited (HTTP 429); retrying after the reset", ex.Message);
     }
 
     [Theory]
