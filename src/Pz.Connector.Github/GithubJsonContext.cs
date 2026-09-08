@@ -22,4 +22,15 @@ namespace Pz.Connector.Github;
 [JsonSerializable(typeof(GitUserDto))]
 [JsonSerializable(typeof(ReleaseDto))]
 [JsonSerializable(typeof(ActionsRunDto))]
+[JsonSerializable(typeof(RepoDto))]
+[JsonSerializable(typeof(IssueDto[]))]
+[JsonSerializable(typeof(PullDto[]))]
+[JsonSerializable(typeof(IssueCommentDto[]))]
+[JsonSerializable(typeof(CommitDto[]))]
+[JsonSerializable(typeof(ReleaseDto[]))]
+[JsonSerializable(typeof(ActionsRunDto[]))]
 internal sealed partial class GithubJsonContext : JsonSerializerContext;
+
+/// <summary>The repo-detail lookup used only to resolve a commits dataset's default branch when no
+/// `ref:` was configured (<see cref="GithubSource"/>). Every other field GitHub sends is ignored.</summary>
+internal sealed record RepoDto([property: JsonPropertyName("default_branch")] string? DefaultBranch);

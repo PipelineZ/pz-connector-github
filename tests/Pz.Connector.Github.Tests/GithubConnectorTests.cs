@@ -172,4 +172,25 @@ public sealed class GithubConnectorTests
             connector.CheckConnectionAsync(
                 Config(new() { ["url"] = server.BaseUrl.ToString() }), cts.Token).AsTask());
     }
+
+    [Fact]
+    public async Task OpenAsync_returns_a_source_for_a_valid_connection()
+    {
+        ISourceConnector connector = new GithubConnector();
+        var source = await connector.OpenAsync(Config(), CancellationToken.None);
+
+        Assert.NotNull(source);
+        await source.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenAsync_throws_a_non_transient_exception_for_an_invalid_connection()
+    {
+        ISourceConnector connector = new GithubConnector();
+
+        var ex = await Assert.ThrowsAsync<PzConnectorException>(() =>
+            connector.OpenAsync(Config(new() { ["url"] = "ftp://example.com" }), CancellationToken.None).AsTask());
+
+        Assert.False(ex.IsTransient);
+    }
 }

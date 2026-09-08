@@ -77,8 +77,9 @@ internal sealed record GithubDatasetConfig(EntityRef Entity, int PerPage, string
 
     /// <summary>The entity-reference kind string for <paramref name="kind"/>, matching the segment
     /// <see cref="EntityRef.TryParse"/> accepts (not <see cref="Enum.ToString()"/>, which would print
-    /// the PascalCase member name instead).</summary>
-    private static string KindName(GithubEntityKind kind) => kind switch
+    /// the PascalCase member name instead). Internal (not private) so <c>GithubPartition</c> can reuse
+    /// it verbatim for its own error-context strings rather than duplicating the switch.</summary>
+    internal static string KindName(GithubEntityKind kind) => kind switch
     {
         GithubEntityKind.Issues => "issues",
         GithubEntityKind.Pulls => "pulls",

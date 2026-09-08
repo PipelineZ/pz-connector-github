@@ -95,6 +95,10 @@ public sealed class GithubConnector : IConnector, ISourceConnector
 
     ValueTask<ISource> ISourceConnector.OpenAsync(ConnectorConfig config, CancellationToken ct)
     {
-        throw new NotImplementedException();
+        var errors = new List<string>();
+        var connection = GithubConnectionConfig.Parse(config, errors)
+            ?? throw new PzConnectorException($"github: invalid connection config: {string.Join("; ", errors)}", isTransient: false);
+        var client = GithubHttpClientFactory.Create(connection);
+        return ValueTask.FromResult<ISource>(new GithubSource(connection, client, _loggerFactory.CreateLogger<GithubSource>()));
     }
 }
