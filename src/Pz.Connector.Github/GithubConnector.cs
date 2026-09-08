@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pz.Connectors.Abstractions;
@@ -23,18 +24,73 @@ public sealed class GithubConnector : IConnector, ISourceConnector
 
     public ConnectorCapabilities Capabilities => ConnectorCapabilities.None;
 
-    public string ConnectionConfigSchema => "{ \"type\": \"object\" }";
+    public string ConnectionConfigSchema => """
+        { "type": "object", "properties": {
+            "url": { "type": "string", "format": "uri" },
+            "token": { "type": "string" } },
+          "additionalProperties": false }
+        """;
 
     public string DatasetConfigSchema => "{ \"type\": \"object\" }";
 
     public ValueTask<ValidationResult> ValidateAsync(ConnectorConfig config, CancellationToken ct)
     {
-        return ValueTask.FromResult(ValidationResult.Success);
+        var errors = new List<string>();
+        GithubConnectionConfig.Parse(config, errors);
+        return ValueTask.FromResult(errors.Count == 0 ? ValidationResult.Success : new ValidationResult(errors));
     }
 
-    public ValueTask<ConnectionCheck> CheckConnectionAsync(ConnectorConfig config, CancellationToken ct)
+    public async ValueTask<ConnectionCheck> CheckConnectionAsync(ConnectorConfig config, CancellationToken ct)
     {
-        throw new NotImplementedException();
+        var errors = new List<string>();
+        var connection = GithubConnectionConfig.Parse(config, errors);
+        if (connection is null)
+        {
+            return new ConnectionCheck(false, string.Join("; ", errors));
+        }
+
+        try
+        {
+            using var client = GithubHttpClientFactory.Create(connection);
+
+            using var rateLimitResponse = await client.GetAsync("/rate_limit", ct).ConfigureAwait(false);
+            var rateLimitBody = await rateLimitResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!rateLimitResponse.IsSuccessStatusCode)
+            {
+                return new ConnectionCheck(false, connection.Redactor.Redact(
+                    $"GET /rate_limit returned HTTP {(int)rateLimitResponse.StatusCode}: {rateLimitBody}"));
+            }
+
+            using var rateLimitDoc = JsonDocument.Parse(rateLimitBody);
+            var rate = rateLimitDoc.RootElement.GetProperty("rate");
+            var remaining = rate.GetProperty("remaining").GetInt64();
+            var limit = rate.GetProperty("limit").GetInt64();
+
+            if (connection.Token is null)
+            {
+                return new ConnectionCheck(true, $"unauthenticated, {remaining}/{limit} requests remaining");
+            }
+
+            using var userResponse = await client.GetAsync("/user", ct).ConfigureAwait(false);
+            var userBody = await userResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!userResponse.IsSuccessStatusCode)
+            {
+                return new ConnectionCheck(false, connection.Redactor.Redact(
+                    $"GET /user returned HTTP {(int)userResponse.StatusCode}: {userBody}"));
+            }
+
+            using var userDoc = JsonDocument.Parse(userBody);
+            var login = userDoc.RootElement.GetProperty("login").GetString();
+
+            return new ConnectionCheck(true, $"authenticated as {login}, {remaining}/{limit} requests remaining");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Every failure is a failed probe, never a crash: a refused connection, a non-JSON body,
+            // a missing field -- all become a failed ConnectionCheck. Cancellation is not a probe
+            // result and still propagates.
+            return new ConnectionCheck(false, connection.Redactor.Redact(ex.Message));
+        }
     }
 
     ValueTask<ISource> ISourceConnector.OpenAsync(ConnectorConfig config, CancellationToken ct)
