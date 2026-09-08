@@ -21,12 +21,12 @@
   <PropertyGroup Condition="'$(IsPackable)' != 'false'">
     <Authors>PipelineZ contributors</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/PipelineZ/pz-connector-kafka</RepositoryUrl>
+    <RepositoryUrl>https://github.com/PipelineZ/pz-connector-github</RepositoryUrl>
     <PackageProjectUrl>https://pipelinez.dev</PackageProjectUrl>
     <!-- "pipelinez-connector" is the ratified discovery tag for pz connector packages: it is the
          one query a project author runs on nuget.org to find installable connectors, so it must
          appear here and must NOT appear on non-connector packages. -->
-    <PackageTags>pipelinez-connector;pipelinez;pz;kafka;streaming;etl;elt;data-pipeline;arrow</PackageTags>
+    <PackageTags>pipelinez-connector;pipelinez;pz;etl;elt;data-pipeline;arrow</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
