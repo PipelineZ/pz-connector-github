@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Pz.Connector.Github/Pz.Connector.Github.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Pz.Connector.Github.Tests/Pz.Connector.Github.Tests.csproj" />
+  </Folder>
+</Solution>

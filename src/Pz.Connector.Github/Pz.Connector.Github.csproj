@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PackageId>Pz.Connector.Github</PackageId>
+    <Description>GitHub source connector for PipelineZ (pz), served out of process. Reads issues, pull requests, comments, commits, releases, and Actions workflow runs.</Description>
+    <PackageTags>pipelinez;pipelinez-connector;pz;github;github-api;etl;duckdb;arrow</PackageTags>
+    <PzPackaging>aot</PzPackaging>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pz.Connectors.Sdk" Version="0.6.0" />
+    <PackageReference Include="Pz.Connectors.Abstractions" Version="0.6.0" />
+    <PackageReference Include="Apache.Arrow" Version="23.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pz.Connector.Github.Tests" />
+  </ItemGroup>
+
+</Project>
