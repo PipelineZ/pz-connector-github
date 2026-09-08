@@ -8,8 +8,12 @@ public sealed class GithubPartitionTests
 {
     private static HttpClient Client(FakeHandler handler) => new(handler) { BaseAddress = new Uri("https://api.github.com") };
 
-    private static DatasetSpec Spec(string dataset, string? watermarkValue = null) =>
-        new("github", dataset, new Dictionary<string, object?>()) { WatermarkValue = watermarkValue };
+    private static DatasetSpec Spec(string dataset, string? watermarkValue = null, string? watermarkCursor = null) =>
+        new("github", dataset, new Dictionary<string, object?>())
+        {
+            WatermarkValue = watermarkValue,
+            WatermarkCursor = watermarkCursor,
+        };
 
     private static GithubPartition Partition(
         HttpClient client, GithubDatasetConfig config, string? resolvedRef, DatasetSpec spec) =>
@@ -332,6 +336,101 @@ public sealed class GithubPartitionTests
         Assert.Equal(2, batches[0].Length);
         Assert.Equal(1, batches[1].Length);
         foreach (var b in batches) { b.Dispose(); }
+    }
+
+    // ---- GHES: a base address carrying a path component is appended to, not replaced ----
+
+    [Fact]
+    public async Task Requests_compose_correctly_against_a_base_address_with_a_path_component_like_ghes()
+    {
+        // Simulates GithubHttpClientFactory's GHES normalization (a trailing-slash base ending in a
+        // path, e.g. "https://ghe.example.com/api/v3/") composed with GithubPartition's own relative
+        // (no leading '/') request paths. Before the fix, GithubPartition built paths with a leading
+        // '/', which -- per RFC 3986 -- REPLACES a base URI's path outright, so this request would
+        // have gone to "/repos/acme/widgets/issues?..." and this test would have failed with
+        // "no route mapped".
+        var handler = new FakeHandler();
+        var client = new HttpClient(handler) { BaseAddress = new Uri("https://ghe.example.com/api/v3/") };
+        handler.Map("/api/v3/repos/acme/widgets/issues?state=all&sort=updated&direction=asc&per_page=100",
+            FakeHandler.Json(HttpStatusCode.OK, "[]"));
+
+        var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.Issues), 100, null);
+        var partition = Partition(client, config, resolvedRef: null, Spec("acme/widgets/issues"));
+
+        var batches = await DrainAsync(partition);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/v3/repos/acme/widgets/issues?state=all&sort=updated&direction=asc&per_page=100",
+            request.PathAndQuery);
+        Assert.Empty(batches);
+    }
+
+    // ---- Watermark: malformed value and cursor/kind mismatch are clear, non-transient errors ----
+
+    [Fact]
+    public void Malformed_watermark_value_throws_a_clear_non_transient_error_naming_the_cursor_column()
+    {
+        // A pipeline that declares `where number > {{ watermark(s, e) }}` on an issues dataset (legal:
+        // this connector's watermark support is SQL-declared, not `columns:`-contracted) produces
+        // WatermarkValue "42" -- not a timestamp. This connector's issues cursor is `updated_at`; the
+        // error must name the actual bad value and the actual cursor column, not throw a raw
+        // unclassified FormatException.
+        var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.Issues), 100, null);
+        var spec = Spec("acme/widgets/issues", watermarkValue: "42");
+
+        var ex = Assert.Throws<PzConnectorException>(
+            () => Partition(Client(new FakeHandler()), config, resolvedRef: null, spec));
+
+        Assert.False(ex.IsTransient);
+        Assert.Contains("acme/widgets/issues", ex.Message);
+        Assert.Contains("42", ex.Message);
+        Assert.Contains("updated_at", ex.Message);
+    }
+
+    [Fact]
+    public void Mismatched_watermark_cursor_throws_a_clear_non_transient_error_naming_both_columns()
+    {
+        // The pipeline's SQL declared a watermark on `number`, but this connector's issues cursor is
+        // always `updated_at` -- silently applying the hardcoded column while ignoring the SQL's
+        // declared one would be silent wrong behavior; this must be a clear compile-time-shaped error.
+        var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.Issues), 100, null);
+        var spec = Spec("acme/widgets/issues", watermarkValue: "5", watermarkCursor: "number");
+
+        var ex = Assert.Throws<PzConnectorException>(
+            () => Partition(Client(new FakeHandler()), config, resolvedRef: null, spec));
+
+        Assert.False(ex.IsTransient);
+        Assert.Contains("number", ex.Message);
+        Assert.Contains("updated_at", ex.Message);
+    }
+
+    [Fact]
+    public void Matching_watermark_cursor_is_accepted()
+    {
+        var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.Issues), 100, null);
+        var spec = Spec("acme/widgets/issues", watermarkValue: "2026-01-01T00:00:00.000000", watermarkCursor: "updated_at");
+
+        var partition = Partition(Client(new FakeHandler()), config, resolvedRef: null, spec);
+
+        Assert.NotNull(partition);
+    }
+
+    // ---- Errors: transport failures are classified via GithubErrors.Wrap, not left raw ----
+
+    [Fact]
+    public async Task Transport_failure_during_the_request_surfaces_a_transient_classified_exception()
+    {
+        var handler = new FakeHandler();
+        handler.Map("/repos/acme/widgets/issues?state=all&sort=updated&direction=asc&per_page=100",
+            _ => throw new HttpRequestException("connection reset"));
+
+        var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.Issues), 100, null);
+        var partition = Partition(Client(handler), config, resolvedRef: null, Spec("acme/widgets/issues"));
+
+        var ex = await Assert.ThrowsAsync<PzConnectorException>(() => DrainAsync(partition));
+
+        Assert.True(ex.IsTransient);
+        Assert.StartsWith("github: reading acme/widgets/issues:", ex.Message);
     }
 
     // ---- Errors: non-2xx surfaces the classified exception and stops the loop ----

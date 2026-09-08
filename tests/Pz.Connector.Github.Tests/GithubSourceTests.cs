@@ -106,10 +106,36 @@ public sealed class GithubSourceTests
     }
 
     [Fact]
+    public async Task PlanReadAsync_commits_default_branch_lookup_transport_failure_surfaces_a_transient_classified_exception()
+    {
+        var handler = new FakeHandler();
+        handler.Map("/repos/acme/widgets", _ => throw new HttpRequestException("connection reset"));
+        var source = Source(handler);
+
+        var ex = await Assert.ThrowsAsync<PzConnectorException>(() =>
+            source.PlanReadAsync(Spec("acme/widgets/commits"), ReadHints.None, CancellationToken.None).AsTask());
+
+        Assert.True(ex.IsTransient);
+        Assert.StartsWith("github: resolving default branch for acme/widgets:", ex.Message);
+    }
+
+    [Fact]
     public async Task DisposeAsync_completes_immediately()
     {
         var source = Source(new FakeHandler());
 
         await source.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_disposes_the_underlying_http_client()
+    {
+        var handler = new FakeHandler();
+        var client = Client(handler);
+        var source = new GithubSource(Connection(), client, NullLogger.Instance);
+
+        await source.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.GetAsync("repos/acme/widgets"));
     }
 }

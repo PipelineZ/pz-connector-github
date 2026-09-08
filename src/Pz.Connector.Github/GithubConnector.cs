@@ -31,7 +31,13 @@ public sealed class GithubConnector : IConnector, ISourceConnector
           "additionalProperties": false }
         """;
 
-    public string DatasetConfigSchema => "{ \"type\": \"object\" }";
+    public string DatasetConfigSchema => """
+        { "type": "object", "properties": {
+            "entity": { "type": "string" },
+            "per_page": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "ref": { "type": "string" } },
+          "additionalProperties": false }
+        """;
 
     public ValueTask<ValidationResult> ValidateAsync(ConnectorConfig config, CancellationToken ct)
     {
@@ -53,7 +59,7 @@ public sealed class GithubConnector : IConnector, ISourceConnector
         {
             using var client = GithubHttpClientFactory.Create(connection);
 
-            using var rateLimitResponse = await client.GetAsync("/rate_limit", ct).ConfigureAwait(false);
+            using var rateLimitResponse = await client.GetAsync("rate_limit", ct).ConfigureAwait(false);
             var rateLimitBody = await rateLimitResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!rateLimitResponse.IsSuccessStatusCode)
             {
@@ -71,7 +77,7 @@ public sealed class GithubConnector : IConnector, ISourceConnector
                 return new ConnectionCheck(true, $"unauthenticated, {remaining}/{limit} requests remaining");
             }
 
-            using var userResponse = await client.GetAsync("/user", ct).ConfigureAwait(false);
+            using var userResponse = await client.GetAsync("user", ct).ConfigureAwait(false);
             var userBody = await userResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!userResponse.IsSuccessStatusCode)
             {
@@ -84,11 +90,13 @@ public sealed class GithubConnector : IConnector, ISourceConnector
 
             return new ConnectionCheck(true, $"authenticated as {login}, {remaining}/{limit} requests remaining");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             // Every failure is a failed probe, never a crash: a refused connection, a non-JSON body,
-            // a missing field -- all become a failed ConnectionCheck. Cancellation is not a probe
-            // result and still propagates.
+            // a missing field, or HttpClient's own request-timeout TaskCanceledException (a subclass
+            // of OperationCanceledException that is NOT the caller's cancellation) -- all become a
+            // failed ConnectionCheck. Only genuine caller cancellation (ct.IsCancellationRequested)
+            // still propagates.
             return new ConnectionCheck(false, connection.Redactor.Redact(ex.Message));
         }
     }

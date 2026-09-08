@@ -43,7 +43,13 @@ internal sealed class GithubSource(GithubConnectionConfig connection, HttpClient
         return partitions;
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        // GithubSource owns the HttpClient it was constructed with (built in
+        // GithubConnector.OpenAsync solely for this source) -- nothing else can dispose it.
+        client.Dispose();
+        return ValueTask.CompletedTask;
+    }
 
     private GithubDatasetConfig ParseDataset(DatasetSpec spec)
     {
@@ -59,15 +65,45 @@ internal sealed class GithubSource(GithubConnectionConfig connection, HttpClient
     /// optimization.</summary>
     private async Task<string?> ResolveDefaultBranchAsync(string owner, string repo, CancellationToken ct)
     {
-        using var response = await client.GetAsync($"/repos/{owner}/{repo}", ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        var context = $"resolving default branch for {owner}/{repo}";
+
+        HttpResponseMessage response;
+        try
         {
-            throw await GithubErrors.FromResponseAsync(response, connection.Redactor, _timeProvider,
-                $"resolving default branch for {owner}/{repo}").ConfigureAwait(false);
+            response = await client.GetAsync($"repos/{owner}/{repo}", ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // the engine's own cancellation -- never wrapped
+        }
+        catch (Exception ex)
+        {
+            throw GithubErrors.Wrap(ex, connection.Redactor, context);
         }
 
-        var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        var repoDto = await JsonSerializer.DeserializeAsync(body, GithubJsonContext.Default.RepoDto, ct).ConfigureAwait(false);
-        return repoDto?.DefaultBranch;
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                throw await GithubErrors.FromResponseAsync(response, connection.Redactor, _timeProvider, context)
+                    .ConfigureAwait(false);
+            }
+
+            try
+            {
+                var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                var repoDto = await JsonSerializer.DeserializeAsync(body, GithubJsonContext.Default.RepoDto, ct)
+                    .ConfigureAwait(false);
+                return repoDto?.DefaultBranch;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw GithubErrors.Wrap(ex, connection.Redactor, context);
+            }
+        }
     }
 }

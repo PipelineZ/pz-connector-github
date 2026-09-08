@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Pz.Connectors.Abstractions;
 using Pz.Connectors.TestKit;
 
@@ -6,6 +7,36 @@ namespace Pz.Connector.Github.Tests;
 public sealed class GithubConnectorTests
 {
     private static ConnectorConfig Config(Dictionary<string, object?>? values = null) => new(values ?? []);
+
+    [Fact]
+    public void ConnectionConfigSchema_is_valid_json_listing_url_and_token()
+    {
+        var connector = new GithubConnector();
+
+        using var doc = JsonDocument.Parse(connector.ConnectionConfigSchema);
+
+        var properties = doc.RootElement.GetProperty("properties");
+        Assert.True(properties.TryGetProperty("url", out _));
+        Assert.True(properties.TryGetProperty("token", out _));
+    }
+
+    [Fact]
+    public void DatasetConfigSchema_is_valid_json_listing_entity_per_page_and_ref()
+    {
+        var connector = new GithubConnector();
+
+        using var doc = JsonDocument.Parse(connector.DatasetConfigSchema);
+
+        Assert.Equal("object", doc.RootElement.GetProperty("type").GetString());
+        var properties = doc.RootElement.GetProperty("properties");
+        Assert.True(properties.TryGetProperty("entity", out var entity));
+        Assert.Equal("string", entity.GetProperty("type").GetString());
+        Assert.True(properties.TryGetProperty("per_page", out var perPage));
+        Assert.Equal("integer", perPage.GetProperty("type").GetString());
+        Assert.True(properties.TryGetProperty("ref", out var refProp));
+        Assert.Equal("string", refProp.GetProperty("type").GetString());
+        Assert.False(doc.RootElement.GetProperty("additionalProperties").GetBoolean());
+    }
 
     [Fact]
     public void Info_name_is_github()

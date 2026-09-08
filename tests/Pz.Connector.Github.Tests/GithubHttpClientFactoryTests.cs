@@ -12,13 +12,30 @@ public sealed class GithubHttpClientFactoryTests
     }
 
     [Fact]
-    public void BaseAddress_is_the_configured_url()
+    public void BaseAddress_is_the_configured_url_normalized_to_a_trailing_slash()
     {
         var config = ParseOrThrow(new() { ["url"] = "https://example.com/api" });
 
         using var client = GithubHttpClientFactory.Create(config);
 
-        Assert.Equal(new Uri("https://example.com/api"), client.BaseAddress);
+        Assert.Equal(new Uri("https://example.com/api/"), client.BaseAddress);
+    }
+
+    [Fact]
+    public void BaseAddress_with_a_path_segment_is_normalized_so_a_relative_request_appends_rather_than_replaces_it()
+    {
+        // Per RFC 3986 §5.3, combining a base URI with an absolute-path reference (a leading '/')
+        // REPLACES the base's path entirely: "https://ghe.example.com/api/v3" + "/repos/o/r/issues"
+        // -> ".../repos/o/r/issues", silently dropping "/api/v3" -- a documented GHES deployment mode
+        // that would be broken outright without this normalization. A trailing-slash base combined
+        // with a RELATIVE reference (this connector's request paths carry no leading '/') appends
+        // instead: this is the mechanism every request path in this connector relies on.
+        var config = ParseOrThrow(new() { ["url"] = "https://ghe.example.com/api/v3" });
+
+        using var client = GithubHttpClientFactory.Create(config);
+        var requestUri = new Uri(client.BaseAddress!, "repos/o/r/issues");
+
+        Assert.Equal("/api/v3/repos/o/r/issues", requestUri.PathAndQuery);
     }
 
     [Fact]
