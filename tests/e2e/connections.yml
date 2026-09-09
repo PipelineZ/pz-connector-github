@@ -1,0 +1,24 @@
+# Source-only connector: `gh` reads through the packaged connector, `out` (localfiles, builtin --
+# no external service) is the write side. `open_issues` reads the fake server's fixture repo, whose
+# issues feed carries 27 real issues (30 seeded rows minus 3 pull-request-shaped ones the connector
+# skips).
+gh:
+  connector: github
+  url: ${GH_URL}
+  token: ${GH_TOKEN}
+  entities:
+    open_issues:
+      read:
+        entity: fixture/repo/issues
+        per_page: 10
+out:
+  connector: localfiles
+  root: ./out
+  entities:
+    open_issues_out:
+      # strategy: replace (default is append) -- a fixed final filename, and a second run
+      # overwrites with the same 27 rows instead of accumulating a second copy, which is what lets
+      # CI prove the pipeline is safe to re-run, not just runnable once.
+      write:
+        format: csv
+        strategy: replace

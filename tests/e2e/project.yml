@@ -1,0 +1,9 @@
+name: github_e2e
+version: 0.1.0
+
+connectors:
+  - package: Pz.Connector.Github
+    version: 0.0.0-PLACEHOLDER
+
+engine:
+  threads: 2
