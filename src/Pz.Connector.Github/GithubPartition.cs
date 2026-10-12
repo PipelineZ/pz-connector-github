@@ -27,11 +27,15 @@ internal sealed class GithubPartition(
         var builder = new ArrowBatchBuilder(schema, options.TargetBatchBytes, maxRowsPerBatch: options.MaxRowsPerBatch);
         var url = BuildInitialUrl(watermarkIso);
         var stop = false;
+        // Captured here: the ambient handle is not guaranteed on whichever thread resumes the iterator.
+        var stats = ConnectorStats.Current;
+        var rateLimit = new GithubRateLimit(stats);
 
         while (url is not null && !stop)
         {
             ct.ThrowIfCancellationRequested();
-            using var response = await GetPageAsync(url, ct).ConfigureAwait(false);
+            using var response = await GetPageAsync(url, stats, ct).ConfigureAwait(false);
+            rateLimit.ReportPage(response);
 
             switch (config.Entity.Kind)
             {
@@ -201,7 +205,7 @@ internal sealed class GithubPartition(
     /// <see cref="GithubErrors.FromResponseAsync"/>; a transport failure (no HTTP answer at all) is
     /// wrapped via <see cref="GithubErrors.Wrap"/> so the engine can tell it apart from a genuine
     /// application error. The caller's own cancellation is never wrapped.</summary>
-    private async Task<HttpResponseMessage> GetPageAsync(string url, CancellationToken ct)
+    private async Task<HttpResponseMessage> GetPageAsync(string url, IConnectorStats stats, CancellationToken ct)
     {
         HttpResponseMessage response;
         try
@@ -221,6 +225,7 @@ internal sealed class GithubPartition(
         {
             using (response)
             {
+                GithubRateLimit.ReportFailure(response, stats);
                 throw await GithubErrors.FromResponseAsync(response, redactor, timeProvider, Context())
                     .ConfigureAwait(false);
             }

@@ -85,6 +85,7 @@ internal sealed class GithubSource(GithubConnectionConfig connection, HttpClient
         {
             if (!response.IsSuccessStatusCode)
             {
+                GithubRateLimit.ReportFailure(response, ConnectorStats.Current);
                 throw await GithubErrors.FromResponseAsync(response, connection.Redactor, _timeProvider, context)
                     .ConfigureAwait(false);
             }

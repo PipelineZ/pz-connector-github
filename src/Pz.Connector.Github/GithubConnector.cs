@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pz.Connectors.Abstractions;
+using Pz.Connectors.Sdk;
 
 namespace Pz.Connector.Github;
 
@@ -11,9 +12,12 @@ public sealed class GithubConnector : IConnector, ISourceConnector
 {
     private readonly ILoggerFactory _loggerFactory;
 
-    public GithubConnector(ILoggerFactory? loggerFactory = null)
+    private readonly RemoteCalls? _remote;
+
+    public GithubConnector(ILoggerFactory? loggerFactory = null, RemoteCalls? remote = null)
     {
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        _remote = remote;
     }
 
     public ConnectorInfo Info { get; } = new(
@@ -22,7 +26,7 @@ public sealed class GithubConnector : IConnector, ISourceConnector
             ?? "0.0.0",
         ProtocolVersion.Major);
 
-    public ConnectorCapabilities Capabilities => ConnectorCapabilities.None;
+    public ConnectorCapabilities Capabilities => ConnectorCapabilities.ReportsStats;
 
     public string ConnectionConfigSchema => """
         { "type": "object", "properties": {
@@ -57,7 +61,7 @@ public sealed class GithubConnector : IConnector, ISourceConnector
 
         try
         {
-            using var client = GithubHttpClientFactory.Create(connection);
+            using var client = GithubHttpClientFactory.Create(connection, _remote);
 
             using var rateLimitResponse = await client.GetAsync("rate_limit", ct).ConfigureAwait(false);
             var rateLimitBody = await rateLimitResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -106,7 +110,7 @@ public sealed class GithubConnector : IConnector, ISourceConnector
         var errors = new List<string>();
         var connection = GithubConnectionConfig.Parse(config, errors)
             ?? throw new PzConnectorException($"github: invalid connection config: {string.Join("; ", errors)}", isTransient: false);
-        var client = GithubHttpClientFactory.Create(connection);
+        var client = GithubHttpClientFactory.Create(connection, _remote);
         return ValueTask.FromResult<ISource>(new GithubSource(connection, client, _loggerFactory.CreateLogger<GithubSource>()));
     }
 }

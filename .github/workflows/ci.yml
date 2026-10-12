@@ -56,10 +56,7 @@ jobs:
           grep -q '"runtime": "process"' manifest.json
           grep -q '"name": "github"' manifest.json
           ! grep -q 'projectDirectoryAnchor' manifest.json
-          # GithubConnector.Capabilities is ConnectorCapabilities.None; the manifest serializes an
-          # empty capability set as an empty array, verified by building and packing locally and
-          # inspecting the real manifest -- never guessed.
-          grep -q '"capabilities": \[\]' manifest.json
+          grep -q '"ReportsStats"' manifest.json
       - name: Start the fake GitHub server
         run: |
           set -euo pipefail
@@ -89,5 +86,9 @@ jobs:
           # proving the pipeline is safe to re-run, not just runnable once.
           pz run
           test "$(tail -n +2 out/open_issues_out/open_issues_out.csv | wc -l)" -eq 27
+          # The run's one GitHub node (the issues SourceLoad) must carry remote stats; a vacuous
+          # pass on zero matching nodes is a failure.
+          RUN_DIR="$(ls -dt .pz/runs/*/ | head -n1)"
+          jq -e '[.nodes[] | select(.connector=="github")] | (length == 1) and (map(.remote.requests > 0) | all)' "${RUN_DIR}run_results.json"
           pz connector test "${PKG_DIR}" --config probe.yml | tee report.txt
           ! grep -q FAIL report.txt
