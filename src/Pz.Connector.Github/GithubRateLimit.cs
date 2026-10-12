@@ -1,46 +1,30 @@
-using System.Globalization;
 using System.Net;
 using Pz.Connectors.Abstractions;
 
 namespace Pz.Connector.Github;
 
-/// <summary>Maps GitHub's rate-limit accounting onto the connector stats. Cost is the growth of
-/// <c>x-ratelimit-used</c> between consecutive pages of one partition, in <c>requests</c>: the counter
-/// is the quota window's, so calls made by other clients of the same token inside the window are
-/// included. The remaining quota is deliberately not reported -- extras are additive across partitions
-/// and attempts, so a summed "remaining" gauge would be meaningless.</summary>
-internal sealed class GithubRateLimit(IConnectorStats stats)
+/// <summary>Maps GitHub's rate-limit accounting onto the connector stats. Every successful REST call
+/// to these endpoints costs one rate-limit point, so cost is one <c>requests</c> unit per successful
+/// call (page reads and the default-branch lookup); failed calls are not billed here. The remaining
+/// quota is deliberately not reported -- extras are additive across partitions and attempts, so a
+/// summed "remaining" gauge would be meaningless.</summary>
+internal static class GithubRateLimit
 {
-    private long? _previousUsed;
+    public static void ReportSuccess(IConnectorStats stats) => stats.AddCost(1, "requests");
 
-    /// <summary>Records one successful page. The first page only sets the baseline; a missing or
-    /// unparseable header, or a counter that moved backwards (window reset), reports nothing.</summary>
-    public void ReportPage(HttpResponseMessage response)
+    /// <summary>Counts GitHub's secondary limit (403 carrying Retry-After) and primary exhaustion
+    /// (403 with <c>x-ratelimit-remaining: 0</c>). A 429 is already counted by the SDK's HTTP
+    /// handler, so it is never counted here.</summary>
+    public static void ReportFailure(HttpResponseMessage response, IConnectorStats stats)
     {
-        if (!response.Headers.TryGetValues("x-ratelimit-used", out var values)
-            || !long.TryParse(values.FirstOrDefault(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var used)
-            || used < 0)
+        if (response.StatusCode != HttpStatusCode.Forbidden)
         {
             return;
         }
 
-        if (_previousUsed is { } previous && used - previous >= 0)
-        {
-            var delta = used - previous;
-            if (delta > 0)
-            {
-                stats.AddCost(delta, "requests");
-            }
-        }
-
-        _previousUsed = used;
-    }
-
-    /// <summary>Counts GitHub's secondary (abuse) limit, signalled by a 403 carrying Retry-After. A
-    /// 429 is already counted by the SDK's HTTP handler, so it is never counted here.</summary>
-    public static void ReportFailure(HttpResponseMessage response, IConnectorStats stats)
-    {
-        if (response.StatusCode == HttpStatusCode.Forbidden && response.Headers.RetryAfter is not null)
+        var exhausted = response.Headers.TryGetValues("x-ratelimit-remaining", out var values)
+            && values.FirstOrDefault() == "0";
+        if (response.Headers.RetryAfter is not null || exhausted)
         {
             stats.AddThrottled(1);
         }

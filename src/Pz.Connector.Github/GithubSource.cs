@@ -90,6 +90,7 @@ internal sealed class GithubSource(GithubConnectionConfig connection, HttpClient
                     .ConfigureAwait(false);
             }
 
+            GithubRateLimit.ReportSuccess(ConnectorStats.Current);
             try
             {
                 var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

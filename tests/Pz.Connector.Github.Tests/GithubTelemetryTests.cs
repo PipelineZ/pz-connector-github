@@ -37,11 +37,12 @@ public sealed class GithubTelemetryTests
     private static HttpClient Client(HttpMessageHandler handler) => new(handler) { BaseAddress = new Uri("https://api.github.com") };
 
     [Fact]
-    public async Task Rate_limit_used_delta_between_pages_is_reported_as_requests_cost()
+    public async Task Each_successful_page_costs_one_requests_point()
     {
         var handler = new FakeHandler();
         handler.Map(IssuesUrl, Page(HttpStatusCode.OK, "5", Page2));
-        handler.Map(Page2, Page(HttpStatusCode.OK, "7"));
+        handler.Map(Page2, Page(HttpStatusCode.OK, "7", "/repos/acme/widgets/issues?page=3"));
+        handler.Map("/repos/acme/widgets/issues?page=3", Page(HttpStatusCode.OK, "9"));
         var acc = new ConnectorStatsAccumulator();
 
         using (ConnectorStats.Use(acc))
@@ -50,36 +51,41 @@ public sealed class GithubTelemetryTests
         }
 
         var s = acc.Snapshot();
-        Assert.Equal(2, s.CostUnits);
+        Assert.Equal(3, s.CostUnits);
         Assert.Equal("requests", s.CostUnit);
         Assert.Empty(s.Extras);
     }
 
     [Fact]
-    public async Task A_used_counter_that_went_backwards_or_is_absent_reports_no_cost()
+    public async Task A_failed_page_costs_nothing()
     {
         var handler = new FakeHandler();
-        handler.Map(IssuesUrl, Page(HttpStatusCode.OK, "9", Page2));
-        handler.Map(Page2, Page(HttpStatusCode.OK, "1"));
+        handler.Map(IssuesUrl, FakeHandler.Json(HttpStatusCode.NotFound, """{"message":"Not Found"}"""));
         var acc = new ConnectorStatsAccumulator();
 
         using (ConnectorStats.Use(acc))
         {
-            await DrainAsync(Partition(Client(handler)));
+            await Assert.ThrowsAsync<PzConnectorException>(() => DrainAsync(Partition(Client(handler))));
         }
 
         Assert.Null(acc.Snapshot().CostUnit);
+    }
 
-        var none = new FakeHandler();
-        none.Map(IssuesUrl, Page(HttpStatusCode.OK, null, Page2));
-        none.Map(Page2, Page(HttpStatusCode.OK, "not-a-number"));
-        var acc2 = new ConnectorStatsAccumulator();
-        using (ConnectorStats.Use(acc2))
+    [Fact]
+    public async Task Primary_limit_403_with_remaining_zero_counts_one_throttle()
+    {
+        var handler = new FakeHandler();
+        var forbidden = FakeHandler.Json(HttpStatusCode.Forbidden, """{"message":"API rate limit exceeded"}""");
+        forbidden.Headers.Add("x-ratelimit-remaining", "0");
+        handler.Map(IssuesUrl, forbidden);
+        var acc = new ConnectorStatsAccumulator();
+
+        using (ConnectorStats.Use(acc))
         {
-            await DrainAsync(Partition(Client(none)));
+            await Assert.ThrowsAsync<PzConnectorException>(() => DrainAsync(Partition(Client(handler))));
         }
 
-        Assert.Null(acc2.Snapshot().CostUnit);
+        Assert.Equal(1, acc.Snapshot().Throttled);
     }
 
     [Fact]

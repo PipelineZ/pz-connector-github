@@ -29,13 +29,12 @@ internal sealed class GithubPartition(
         var stop = false;
         // Captured here: the ambient handle is not guaranteed on whichever thread resumes the iterator.
         var stats = ConnectorStats.Current;
-        var rateLimit = new GithubRateLimit(stats);
 
         while (url is not null && !stop)
         {
             ct.ThrowIfCancellationRequested();
             using var response = await GetPageAsync(url, stats, ct).ConfigureAwait(false);
-            rateLimit.ReportPage(response);
+            GithubRateLimit.ReportSuccess(stats);
 
             switch (config.Entity.Kind)
             {
