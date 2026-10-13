@@ -104,7 +104,8 @@ jobs:
           grep -q '"runtime": "process"' manifest.json
           grep -q '"name": "github"' manifest.json
           ! grep -q 'projectDirectoryAnchor' manifest.json
-          grep -q '"capabilities": \[\]' manifest.json
+          grep -q '"capabilities": \[' manifest.json
+          grep -q '"ReportsStats"' manifest.json
           for rid in linux-x64 linux-arm64 osx-arm64 win-x64; do
             grep -q "\"${rid}\":" manifest.json
           done
