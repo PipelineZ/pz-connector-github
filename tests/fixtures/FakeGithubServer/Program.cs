@@ -6,6 +6,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<RequestLog>();
 var app = builder.Build();
 
+// Quota consumed so far by this server instance: one unit per REST call, so a run's cost is the
+// number of pages it fetched. /rate_limit is exempt, as it is on GitHub.
+long rateLimitUsed = 0;
+
 // Forced-status short-circuit: a repo name matching one of the magic `force-*` names below gets
 // that status back immediately, before auth or the default rate-limit headers -- applied uniformly,
 // to every route, exactly like the spec asks. This is the only way an acceptance test can drive a
@@ -47,9 +51,13 @@ app.Use(async (context, next) =>
     context.RequestServices.GetRequiredService<RequestLog>()
         .Record(context.Request.Path.Value + context.Request.QueryString.Value);
 
+    var used = context.Request.Path.Value == "/rate_limit"
+        ? Interlocked.Read(ref rateLimitUsed)
+        : Interlocked.Increment(ref rateLimitUsed);
     context.Response.OnStarting(() =>
     {
-        context.Response.Headers.TryAdd("x-ratelimit-remaining", "4999");
+        context.Response.Headers.TryAdd("x-ratelimit-used", used.ToString(CultureInfo.InvariantCulture));
+        context.Response.Headers.TryAdd("x-ratelimit-remaining", (5000 - used).ToString(CultureInfo.InvariantCulture));
         context.Response.Headers.TryAdd("x-ratelimit-reset",
             DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
         return Task.CompletedTask;

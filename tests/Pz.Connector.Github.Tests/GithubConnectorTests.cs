@@ -53,10 +53,10 @@ public sealed class GithubConnectorTests
     }
 
     [Fact]
-    public void Capabilities_are_none()
+    public void Capabilities_are_only_ReportsStats()
     {
         var connector = new GithubConnector();
-        Assert.Equal(ConnectorCapabilities.None, connector.Capabilities);
+        Assert.Equal(ConnectorCapabilities.ReportsStats, connector.Capabilities);
     }
 
     [Fact]
