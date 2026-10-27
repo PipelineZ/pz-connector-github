@@ -5,7 +5,7 @@ namespace Pz.Connector.Github;
 
 /// <summary>Source-generated JSON context for GitHub connector. JsonElement is a minimal shell kept
 /// for the `pull_request` presence check (<see cref="IssueDto.PullRequest"/>); every fixed-schema
-/// entity's DTOs (issues, pulls, issue/PR comments, commits, releases, Actions runs) are registered
+/// entity's DTOs (issues, pulls, issue/PR comments, commits, releases, Actions runs and their page envelope) are registered
 /// explicitly, including nested types, plus `string[]` for the `labels`/`assignees` JSON-array
 /// serialization in <c>IssuesSchema</c>.</summary>
 [JsonSerializable(typeof(JsonElement))]
@@ -29,6 +29,7 @@ namespace Pz.Connector.Github;
 [JsonSerializable(typeof(CommitDto[]))]
 [JsonSerializable(typeof(ReleaseDto[]))]
 [JsonSerializable(typeof(ActionsRunDto[]))]
+[JsonSerializable(typeof(ActionsRunsPageDto))]
 internal sealed partial class GithubJsonContext : JsonSerializerContext;
 
 /// <summary>The repo-detail lookup used only to resolve a commits dataset's default branch when no

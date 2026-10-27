@@ -144,8 +144,10 @@ internal sealed class GithubPartition(
 
                 case GithubEntityKind.ActionsRuns:
                 {
-                    var items = await DeserializePageAsync(response, GithubJsonContext.Default.ActionsRunDtoArray, ct).ConfigureAwait(false);
-                    foreach (var item in items)
+                    // Unlike the other list endpoints, workflow runs come wrapped in a
+                    // {total_count, workflow_runs} envelope rather than as a bare array.
+                    var envelope = await DeserializePageAsync(response, GithubJsonContext.Default.ActionsRunsPageDto, ct).ConfigureAwait(false);
+                    foreach (var item in envelope?.WorkflowRuns ?? [])
                     {
                         builder.AppendRow(ActionsRunsSchema.ToRow(item));
                         if (builder.TryTakeBatch(out var batch))
@@ -235,12 +237,15 @@ internal sealed class GithubPartition(
 
     /// <summary>Reads and deserializes one page's body, classifying a truncated/malformed body the
     /// same way as a transport failure -- both mean the caller got no usable rows for this page.</summary>
-    private async Task<T[]> DeserializePageAsync<T>(HttpResponseMessage response, JsonTypeInfo<T[]> typeInfo, CancellationToken ct)
+    private async Task<T[]> DeserializePageAsync<T>(HttpResponseMessage response, JsonTypeInfo<T[]> typeInfo, CancellationToken ct) =>
+        await DeserializePageAsync<T[]>(response, typeInfo, ct).ConfigureAwait(false) ?? [];
+
+    private async Task<T?> DeserializePageAsync<T>(HttpResponseMessage response, JsonTypeInfo<T> typeInfo, CancellationToken ct)
     {
         try
         {
             var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            return await JsonSerializer.DeserializeAsync(body, typeInfo, ct).ConfigureAwait(false) ?? [];
+            return await JsonSerializer.DeserializeAsync(body, typeInfo, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

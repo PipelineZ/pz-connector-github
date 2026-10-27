@@ -164,7 +164,9 @@ app.MapGet("/repos/{owner}/{repo}/actions/runs", (HttpContext ctx, string owner,
 
     var (page, perPage) = ReadPaging(ctx, defaultPerPage: 30);
     var created = ctx.Request.Query["created"].FirstOrDefault();
-    return PagedJson(ctx, FixtureRepo.QueryRuns(created), page, perPage);
+    // GitHub wraps workflow runs in an envelope; the other list endpoints return bare arrays.
+    return PagedJson(ctx, FixtureRepo.QueryRuns(created), page, perPage,
+        (slice, total) => new { total_count = total, workflow_runs = slice });
 });
 
 app.Run();
@@ -194,8 +196,10 @@ static (int Page, int PerPage) ReadPaging(HttpContext ctx, int defaultPerPage)
 
 /// <summary>Slices <paramref name="all"/> to the requested page and, when more rows remain, adds the
 /// RFC 8288 `Link: rel="next"` header the connector's own `LinkHeaderPaginator` follows -- the last
-/// page carries no such header, which is what stops the connector's page walk.</summary>
-static IResult PagedJson<T>(HttpContext ctx, IReadOnlyList<T> all, int page, int perPage)
+/// page carries no such header, which is what stops the connector's page walk. <paramref name="envelope"/>
+/// wraps the page for endpoints that do not return a bare array (Actions runs).</summary>
+static IResult PagedJson<T>(HttpContext ctx, IReadOnlyList<T> all, int page, int perPage,
+    Func<List<T>, int, object>? envelope = null)
 {
     var skip = (page - 1) * perPage;
     var slice = all.Skip(skip).Take(perPage).ToList();
@@ -205,7 +209,7 @@ static IResult PagedJson<T>(HttpContext ctx, IReadOnlyList<T> all, int page, int
         ctx.Response.Headers.Append("Link", BuildNextLink(ctx, page + 1));
     }
 
-    return Results.Json(slice);
+    return envelope is null ? Results.Json(slice) : Results.Json(envelope(slice, all.Count));
 }
 
 static string BuildNextLink(HttpContext ctx, int nextPage)

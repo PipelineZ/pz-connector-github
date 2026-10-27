@@ -113,4 +113,45 @@ public sealed class LiveGithubFacts
         Assert.Equal("Bearer", request.Headers.Authorization.Scheme);
         Assert.NotNull(request.Headers.Authorization.Parameter);
     }
+
+    /// <summary>`actions/runs` is the one list endpoint that returns an envelope instead of a bare
+    /// array; reading it from a real repo is what proves the connector parses that shape.</summary>
+    [SkippableFact]
+    public async Task Reads_real_actions_runs_from_a_public_repo()
+    {
+        var token = Environment.GetEnvironmentVariable("GITHUB_TEST_TOKEN");
+        Skip.If(string.IsNullOrEmpty(token), "GITHUB_TEST_TOKEN is not set");
+
+        var errors = new List<string>();
+        var connectionConfig = GithubConnectionConfig.Parse(
+            new ConnectorConfig(new Dictionary<string, object?> { ["token"] = token }),
+            errors);
+        Assert.NotNull(connectionConfig);
+        Assert.Empty(errors);
+
+        var httpClient = new HttpClient { BaseAddress = connectionConfig.Url };
+        httpClient.DefaultRequestHeaders.Accept.Add(
+            new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        httpClient.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+        httpClient.DefaultRequestHeaders.UserAgent.Add(
+            new System.Net.Http.Headers.ProductInfoHeaderValue("pz-connector-github", "test"));
+        httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", connectionConfig.Token);
+
+        var source = new GithubSource(connectionConfig, httpClient, NullLogger.Instance);
+        var spec = new DatasetSpec("github", "PipelineZ/pz-connector-github/actions/runs",
+            new Dictionary<string, object?> { ["per_page"] = 5 });
+        var partitions = await source.PlanReadAsync(spec, ReadHints.None, CancellationToken.None);
+
+        var rowCount = 0;
+        await foreach (var batch in partitions[0].ReadAsync(BatchOptions.Default, CancellationToken.None))
+        {
+            rowCount += batch.Length;
+            Assert.True(batch.Schema.GetFieldIndex("run_number") >= 0, "Expected a 'run_number' column");
+            batch.Dispose();
+            break;
+        }
+
+        Assert.True(rowCount > 0, "Expected at least one workflow run from the real API");
+    }
 }
