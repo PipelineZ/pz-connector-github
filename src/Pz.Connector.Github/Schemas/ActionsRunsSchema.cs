@@ -19,6 +19,12 @@ internal sealed record ActionsRunDto(
     [property: JsonPropertyName("run_started_at")] string? RunStartedAt,
     [property: JsonPropertyName("html_url")] string? HtmlUrl);
 
+/// <summary>One page off GitHub's Actions workflow-runs-list endpoint, which (unlike the other list
+/// endpoints) wraps its items in an envelope: <c>{ "total_count": n, "workflow_runs": [...] }</c>.</summary>
+internal sealed record ActionsRunsPageDto(
+    [property: JsonPropertyName("total_count")] int TotalCount,
+    [property: JsonPropertyName("workflow_runs")] ActionsRunDto[]? WorkflowRuns);
+
 /// <summary>Arrow shape for the `actions/runs` entity (spec §6.6) and the pure DTO-to-row mapping
 /// `GithubPartition` (Task 7) calls per page item. Every column is nullable; `conclusion` is null
 /// while a run is in progress -- GitHub sends a JSON `null` for that field, not a sentinel string, so

@@ -259,10 +259,11 @@ public sealed class GithubPartitionTests
         var handler = new FakeHandler();
         handler.Map($"/repos/acme/widgets/actions/runs?per_page=100&created={expectedCreated}",
             FakeHandler.Json(HttpStatusCode.OK, """
-                [{"id":1,"name":"ci","run_number":1,"head_branch":"main","head_sha":"abc","event":"push",
-                  "status":"completed","conclusion":"success","created_at":"2026-01-02T00:00:00Z",
-                  "updated_at":"2026-01-02T00:00:00Z","run_started_at":"2026-01-02T00:00:00Z",
-                  "html_url":"https://x"}]
+                {"total_count":1,"workflow_runs":[
+                  {"id":1,"name":"ci","run_number":1,"head_branch":"main","head_sha":"abc","event":"push",
+                   "status":"completed","conclusion":"success","created_at":"2026-01-02T00:00:00Z",
+                   "updated_at":"2026-01-02T00:00:00Z","run_started_at":"2026-01-02T00:00:00Z",
+                   "html_url":"https://x"}]}
                 """));
 
         var config = new GithubDatasetConfig(new EntityRef("acme", "widgets", GithubEntityKind.ActionsRuns), 100, null);
