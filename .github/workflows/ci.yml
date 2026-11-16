@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
       - run: dotnet build Pz.Connector.Github.slnx -c Release
       # The acceptance suite drives the fake GitHub server in-process via WebApplicationFactory<Program>
       # (Kestrel test host, no external dependencies) -- unlike sibling connectors that need
@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
       - name: Publish the host RID and pack
         run: |
           set -euo pipefail
